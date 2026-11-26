@@ -6,11 +6,13 @@ const $ = id => document.getElementById(id);
 const base = new URL('../', import.meta.url);
 const storage = 'ndbc-wave-studio:last-experiment/1';
 const referenceStorage = 'ndbc-wave-studio:reference/1';
+const overlayLayout = matchMedia('(min-width: 1000px)');
 const shade = 'ndbc-wave-studio:theme';
 const initialPrefs = () => ({ seed: 41046, point: { x: 0, y: 0 }, assume: false, scenario: 'original', custom: { ...PRESETS.original } });
 const state = { data: null, map: null, record: null, result: null, prefs: initialPrefs(), history: [],
   groups: [], modes: [], jobs: new Map(), stats: new Map(), selected: 0, bounds: null, scale: 'shared', curves: { observed: true, ittc: true, jonswap: true },
-  lab: null, stage: null, panel: 'wave', view: 'ocean', speed: 1, trace: null, labTime: 0, validationRun: 0, archiveFiles: null, pending: false, reference: null, compareScale: 'absolute' };
+  lab: null, stage: null, panel: 'wave', view: 'ocean', speed: 1, trace: null, labTime: 0, validationRun: 0, archiveFiles: null, pending: false, reference: null, compareScale: 'absolute',
+  probeOpen: false, overlay: { dock: 0, tabs: 0, mast: 0, mastWidth: 0, rail: 0, edge: 0 } };
 const titles = { original: '原方案', updated: '新方案', both: '并排比较', custom: '自定义方案' };
 const dateLabel = value => value?.replace('T', ' ').replace(/:00(?:\.000)?Z$/, '') || '未记录';
 const rounded = (x, digits = 2) => Number.isFinite(x) ? x.toFixed(digits) : '—';
@@ -84,7 +86,7 @@ function currentArchive(record) {
 }
 
 function setCaseButtons() {
-  select($('data-cases'), 'case', state.record?.id);
+  document.querySelectorAll('[data-case-list]').forEach(list => select(list, 'case', state.record?.id));
 }
 
 function builtInCase(record) {
@@ -103,7 +105,8 @@ function openPanel(id, { focus = false, hash = true } = {}) {
   const tabs = [...$('workspace-tabs').querySelectorAll('[data-panel]')];
   const active = tabs.find(tab => tab.dataset.panel === id && !tab.hidden)
     || tabs.find(tab => tab.dataset.panel === 'spectra');
-  if (state.panel === 'wave' && active.dataset.panel !== 'wave') {
+  const leavingCanvas = state.panel === 'wave' && active.dataset.panel !== 'wave';
+  if (leavingCanvas) {
     state.lab?.play(false);
     updatePlayButtons();
   }
@@ -116,6 +119,7 @@ function openPanel(id, { focus = false, hash = true } = {}) {
     $(tab.dataset.panel).hidden = !current;
   }
   if (hash) history.replaceState(null, '', `#${state.panel}`);
+  if (leavingCanvas && overlayLayout.matches) window.scrollTo({ top: 0, behavior: 'instant' });
   if (focus) {
     active.focus({ preventScroll: true });
     const viewport = $('workspace-tabs').getBoundingClientRect(), target = active.getBoundingClientRect();
@@ -279,7 +283,8 @@ function timeReading(value, force = false) {
   if (force || $('time-readout').textContent !== ds) {
     $('time-slider').value = String(value); $('time-readout').textContent = ds;
     $('trace-time').textContent = ds;
-    $('point-value').textContent = `${rounded(waveAt(state.modes, state.prefs.point.x, state.prefs.point.y, value))} m`;
+    $('scene-probe-time').textContent = ds;
+    writePointHeight(value);
     if (force || (state.lastTraceTime ?? -1) + .16 < value || state.lastTraceTime > value) {
       state.lastTraceTime = value;
       drawTrace();
@@ -291,7 +296,11 @@ function attachScene(fallback = false) {
   const host = $('lab-media');
   state.lab?.dispose();
   state.lab = (fallback ? state.stage.create2d : state.stage.oceanStage)(host, {
-    onTime: timeReading, pick: setPoint, onCamera: updateViewReading,
+    onTime: timeReading, pick: point => {
+      state.probeOpen = true;
+      setPoint(point);
+      state.lab?.setPoint(state.prefs.point);
+    }, onProject: positionProbe, onCamera: updateViewReading,
     onOutside: () => notify('请在模型的 320 × 320 m 区域内选点，也可在实验面板直接输入坐标。'),
     onLost: () => { attachScene(true); setupLab(); },
   });
@@ -309,7 +318,9 @@ async function updateScene() {
   }
   if (!state.lab && state.panel !== 'wave') return;
   try {
-    state.stage ||= await import('./ocean.js');
+    const module = new URL('./ocean.js', import.meta.url);
+    module.search = new URL(import.meta.url).search;
+    state.stage ||= await import(module);
     setupLab();
   } catch (error) {
     console.error(error);
@@ -356,10 +367,38 @@ function refreshTrace() {
   const pt = state.prefs.point, step = .25;
   $('probe-x').value = pt.x;
   $('probe-y').value = pt.y;
-  $('point-name').textContent = `东 ${pt.x.toFixed(1)} m · 北 ${pt.y.toFixed(1)} m`;
-  $('point-value').textContent = `${rounded(waveAt(state.modes, pt.x, pt.y, state.labTime))} m`;
+  const coordinate = `东 ${pt.x.toFixed(1)} m · 北 ${pt.y.toFixed(1)} m`;
+  $('point-name').textContent = coordinate;
+  $('scene-probe-coordinate').textContent = coordinate;
+  writePointHeight(state.labTime);
   state.trace = { x: Array.from({ length: 321 }, (_, i) => i * step), y: samplePoint(state.groups, pt, step, 321) };
   drawTrace();
+}
+
+function writePointHeight(time) {
+  const { x, y } = state.prefs.point;
+  const height = `${rounded(waveAt(state.modes, x, y, time))} m`;
+  $('point-value').textContent = height;
+  $('scene-probe-height').textContent = height;
+}
+
+function positionProbe(x, y, width, height) {
+  if (!state.probeOpen || width <= 600) return;
+  const probe = $('scene-probe'), overlay = state.overlay, immersive = overlayLayout.matches;
+  const right = width - (immersive ? overlay.rail + overlay.edge * 2 : 10);
+  const bottom = height - (immersive ? overlay.dock + overlay.tabs + overlay.edge + 8 : 10);
+  const top = immersive && x < overlay.mastWidth + overlay.edge * 2 ? overlay.mast + overlay.edge + 56 : 9;
+  const below = y < top + 108;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 9 || x > right || y < top || y > bottom || below && y + 108 > bottom) {
+    probe.hidden = true;
+    return;
+  }
+  const card = Math.max(9, Math.min(x - 89, right - 183));
+  probe.dataset.below = String(below);
+  probe.style.setProperty('--probe-x', `${Math.round(x)}px`);
+  probe.style.setProperty('--probe-y', `${Math.round(y)}px`);
+  probe.style.setProperty('--probe-card-x', `${Math.round(card - x)}px`);
+  probe.hidden = false;
 }
 
 function seekTime(seconds) {
@@ -666,18 +705,19 @@ function exportPng() {
 }
 
 function makeCaseButtons() {
-  $('data-cases').replaceChildren(...state.data.cases.map(record => {
+  const cases = state.data.cases.map(record => [record, rounded(moments(record.rows).hm0)]);
+  document.querySelectorAll('[data-case-list]').forEach(list => list.replaceChildren(...cases.map(([record, value]) => {
     const button = document.createElement('button'), name = document.createElement('span'), height = document.createElement('span');
     button.type = 'button';
     button.dataset.case = record.id;
     name.textContent = record.name;
     height.className = 'case-height';
-    height.textContent = `${rounded(moments(record.rows).hm0)} m`;
+    height.textContent = `${value} m`;
     button.append(name, height);
     button.setAttribute('aria-pressed', String(state.record?.id === record.id));
     button.addEventListener('click', () => selectCase(record));
     return button;
-  }));
+  })));
 }
 
 function selectCase(record) {
@@ -731,9 +771,21 @@ function zoomAt(event) {
 
 function bind() {
   const mast = document.querySelector('.mast');
-  const measureMast = () => document.documentElement.style.setProperty('--mast-height', `${Math.ceil(mast.getBoundingClientRect().height)}px`);
-  new ResizeObserver(measureMast).observe(mast);
-  measureMast();
+  const dock = $('wave-dock'), toolbar = document.querySelector('.work-line'), rail = document.querySelector('.result-rail');
+  const measureOverlay = () => {
+    const bounds = mast.getBoundingClientRect();
+    state.overlay = { dock: dock.offsetHeight, tabs: toolbar.offsetHeight, mast: Math.ceil(bounds.height), mastWidth: bounds.width, rail: rail.offsetWidth, edge: bounds.left };
+    document.documentElement.style.setProperty('--mast-height', `${state.overlay.mast}px`);
+    if (state.overlay.dock) $('workbench').style.setProperty('--dock-height', `${state.overlay.dock}px`);
+  };
+  const overlayResize = new ResizeObserver(measureOverlay);
+  for (const element of [mast, dock, toolbar, rail]) overlayResize.observe(element);
+  measureOverlay();
+  $('dismiss-probe').addEventListener('click', () => {
+    state.probeOpen = false;
+    $('scene-probe').hidden = true;
+    $('lab-media').querySelector('canvas')?.focus({ preventScroll: true });
+  });
   const tabs = $('workspace-tabs');
   tabs.addEventListener('click', event => {
     const tab = event.target.closest('[data-panel]');

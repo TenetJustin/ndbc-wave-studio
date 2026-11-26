@@ -196,6 +196,7 @@ function create2d(host, options) {
     gc.putImageData(data, 0, 0); ctx.drawImage(grid, 0, 0, w, h);
     const x = (point.x / DOMAIN + .5) * w, y = (.5 - point.y / DOMAIN) * h;
     ctx.strokeStyle = '#ffdbb8'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.stroke();
+    options.onProject?.(x, y, w, h);
     return false;
   }, options);
   canvas.addEventListener('click', e => {
@@ -340,6 +341,7 @@ export function oceanStage(host, options = {}) {
 
   let modes = [], point = { x: 0, y: 0 }, view = 'ocean', size = '', toTop = false, renderedTime = 0, cameraMove = null;
   const lastCamera = new THREE.Vector3();
+  const projection = new THREE.Vector3();
   const dpr = Math.min(mobile ? 1.14 : 1.38, devicePixelRatio || 1);
   function cameraPreset(top = false, animate = false) {
     toTop = top;
@@ -369,7 +371,7 @@ export function oceanStage(host, options = {}) {
     if (size !== key) {
       const oldAspect = camera.aspect;
       size = key;
-      renderer.setPixelRatio(dpr);
+      renderer.setPixelRatio(Math.min(dpr, Math.sqrt(1_500_000 / (w * h))));
       renderer.setSize(w, h, false);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
@@ -394,6 +396,13 @@ export function oceanStage(host, options = {}) {
     marker.position.set(point.x, waveAt(modes, point.x, point.y, t) + .75, -point.y);
     if (sky.visible) sky.position.copy(camera.position);
     renderer.render(scene, camera);
+    if (options.onProject) {
+      projection.copy(marker.position);
+      projection.y += markerHead.position.y;
+      projection.project(camera);
+      const visible = projection.z >= -1 && projection.z <= 1;
+      options.onProject(visible ? (projection.x + 1) * w / 2 : NaN, (1 - projection.y) * h / 2, w, h);
+    }
     const moving = lastCamera.distanceToSquared(camera.position) > .000005;
     lastCamera.copy(camera.position);
     return moving || cameraMove !== null;

@@ -23,7 +23,7 @@
             <div class="rail-top"><h2>观测数据</h2><button class="button compact action" type="button" data-import>导入文件</button></div>
             <div class="rail-body">
               <div class="rail-label">NDBC 41046 · 内置案例</div>
-              <div id="data-cases" class="case-list" aria-label="选择内置案例"></div>
+              <div id="data-cases" class="case-list" data-case-list aria-label="选择内置案例"></div>
               <article class="import-detail" id="import-details" hidden><div><h3 id="import-name">导入结果</h3><p id="import-copy"></p></div><div id="archive-selection" hidden><label for="archive-time">观测时次 · UTC</label><input id="archive-time" list="archive-times" placeholder="YYYY-MM-DD HH:mm"><datalist id="archive-times"></datalist><button class="button ghost compact" type="button" id="choose-time">切换时次</button></div></article>
               <div class="source-links"><button class="plain-button" data-open-panel="data" type="button">站位与时间线</button><a class="text-link" href="./data/example-spectrum.csv" download>示例 CSV</a></div>
             </div>
@@ -35,7 +35,7 @@
     </div>
   </header>
   <main id="main">
-    <div class="shell work" id="workbench">
+    <div class="shell work" id="workbench" data-panel="wave">
       <div class="workspace">
         <div class="work-line"><div class="workspace-tabs" id="workspace-tabs" role="tablist" aria-label="分析视图"><button id="tab-wave" data-panel="wave" type="button" role="tab" aria-controls="wave" aria-selected="true">三维波面</button><button id="tab-spectra" data-panel="spectra" type="button" role="tab" aria-controls="spectra" aria-selected="false" tabindex="-1">一维频谱</button><button id="tab-direction" data-panel="direction" type="button" role="tab" aria-controls="direction" aria-selected="false" tabindex="-1">方向谱</button><button id="tab-checks" data-panel="checks" type="button" role="tab" aria-controls="checks" aria-selected="false" tabindex="-1">统计检验</button><button id="tab-compare" data-panel="compare" type="button" role="tab" aria-controls="compare" aria-selected="false" tabindex="-1">实验对照</button><button id="tab-data" data-panel="data" type="button" role="tab" aria-controls="data" aria-selected="false" tabindex="-1">站位与观测</button></div><button id="undo" class="plain-button" type="button" hidden>撤销</button></div>
         <div class="notice" id="notice" hidden><span id="notice-text" role="status" aria-live="polite"></span><button class="plain-button" id="dismiss-notice" type="button" aria-label="关闭提示">关闭</button></div>
@@ -44,7 +44,7 @@
         <header class="section-head"><div><h2 id="data-title">41046 站观测</h2><p>2025 年资料期内的逐日最大有效波高和三个代表时次。</p></div></header>
         <div class="two-col data-grid">
           <article class="panel"><div class="panel-head"><div><h3>41046 站</h3><p>23.840° N　68.340° W</p></div><a class="text-link" href="https://www.ndbc.noaa.gov/station_page.php?station=41046" target="_blank" rel="noopener noreferrer">NOAA 站点</a></div><canvas id="map" class="map" aria-label="41046 站位于巴哈马东北、北大西洋西部" role="img"></canvas><p class="panel-foot">岸线来源 Natural Earth</p></article>
-          <article class="panel"><div class="panel-head"><div><h3>有效波高时间线</h3><p id="data-count">12,109 条观测 · 每日最大值</p></div></div><canvas id="timeline" class="chart timeline" aria-label="2025 年逐日最大有效波高，可从左侧选择案例" role="img"></canvas></article>
+          <article class="panel"><div class="panel-head"><div><h3>有效波高时间线</h3><p id="data-count">12,109 条观测 · 每日最大值</p></div></div><canvas id="timeline" class="chart timeline" aria-label="2025 年逐日最大有效波高，可从数据菜单选择案例" role="img"></canvas></article>
         </div>
       </section>
 
@@ -82,14 +82,25 @@
               <button data-mode="ocean" aria-pressed="true" type="button">实景</button><button data-mode="science" aria-pressed="false" type="button">高程</button><button id="top-view" type="button" aria-pressed="false">俯视</button><button id="reset-view" type="button">复位</button>
             </div>
             <div class="frame-key" id="elevation-key" hidden><span id="range-top">波峰</span><i></i><span id="range-bottom">波谷</span></div>
+            <div class="scene-probe" id="scene-probe" hidden>
+              <span class="scene-probe-pin" aria-hidden="true"></span>
+              <div class="scene-probe-card">
+                <div class="scene-probe-head"><strong>当前测点</strong><button type="button" id="dismiss-probe" aria-label="收起测点卡">×</button></div>
+                <p id="scene-probe-coordinate"></p>
+                <div class="scene-probe-reading"><output id="scene-probe-height">—</output><span id="scene-probe-time">0.00 s</span></div>
+              </div>
+            </div>
             <div class="viewport-caption"><span id="stage-note">320 × 320 m</span><span id="wave-instructions">拖动旋转 · 点选测点</span></div>
           </div>
+          <div class="wave-dock" id="wave-dock">
           <div class="play-toolbar">
             <button class="button compact action" id="lab-play" type="button">播放</button>
             <button class="plain-button rewind" id="rewind-time" type="button" aria-label="回到起点" title="回到起点">↺</button>
             <input id="time-slider" type="range" min="0" max="80" step="0.05" value="0" aria-label="模拟时间秒">
             <output id="time-readout">0.00 s</output>
             <div class="button-group speed-picker" id="play-speeds" aria-label="播放速度"><button type="button" data-speed="0.5" aria-pressed="false">½×</button><button type="button" data-speed="1" aria-pressed="true">1×</button><button type="button" data-speed="2" aria-pressed="false">2×</button></div>
+          </div>
+          <div class="case-dock"><span class="case-dock-label">观测案例</span><div id="dock-cases" class="case-list" data-case-list aria-label="快速切换观测案例"></div></div>
           </div>
         </div>
       </section>
@@ -120,16 +131,20 @@
       </div>
 
       <aside class="result-rail" aria-label="实验面板">
-        <div class="rail-top"><h2>实验面板</h2><span class="source-readiness" id="source-readiness"></span></div>
+        <section class="instrument-card conditions-card" aria-labelledby="conditions-title">
+        <div class="rail-top"><h2 id="conditions-title">当前海况</h2><span class="source-readiness" id="source-readiness"></span></div>
         <dl class="current-metrics"><div><dt>谱有效波高 <span>Hₘ₀</span></dt><dd id="metric-hm0">—</dd></div><div><dt>峰值周期</dt><dd id="metric-tp">—</dd></div><div><dt>峰值频率</dt><dd id="metric-fp">—</dd></div><div><dt>有效频带</dt><dd id="metric-bins">—</dd></div></dl>
-        <article class="trace" id="trace-panel">
+        </section>
+        <article class="instrument-card trace" id="trace-panel">
           <div class="panel-head"><div><h3>测点高程</h3><p id="point-name">东 0.0 m · 北 0.0 m</p></div><div class="point-reading"><output id="point-value">—</output><span id="trace-time">0.00 s</span></div></div>
           <canvas id="trace" class="chart small-chart" tabindex="0" aria-label="固定点模拟高程。点选时间，方向键以 0.25 秒移动。"></canvas>
           <div class="point-actions"><button class="plain-button" type="button" id="reset-point">复位测点</button><button class="plain-button" data-open-panel="checks" type="button">统计检验</button></div>
           <details class="method probe-settings"><summary>测点与种子</summary><form id="probe-form" class="probe-form"><label>东 x / m<input type="number" id="probe-x" min="-160" max="160" step="0.1" required></label><label>北 y / m<input type="number" id="probe-y" min="-160" max="160" step="0.1" required></label><label>随机种子<input type="number" id="seed" min="0" max="4294967295" value="41046" required></label><button class="button ghost compact">应用</button></form></details>
         </article>
-        <details class="method fit-details"><summary>频谱拟合误差</summary><div class="result-fit"><span>归一化均方根误差</span><div><strong>ITTC</strong><output id="compact-ittc">—</output></div><div><strong>JONSWAP</strong><output id="compact-jonswap">—</output></div></div></details>
+        <section class="instrument-card analysis-card" aria-label="谱拟合与对照">
+        <details class="method fit-details" open><summary>频谱拟合误差</summary><div class="result-fit"><span>归一化均方根误差</span><div><strong>ITTC</strong><output id="compact-ittc">—</output></div><div><strong>JONSWAP</strong><output id="compact-jonswap">—</output></div></div></details>
         <div class="baseline-actions"><button class="button ghost compact" type="button" data-pin-reference disabled>设为基准</button><button class="plain-button" data-open-panel="compare" id="view-reference" type="button" hidden>查看对照</button></div>
+        </section>
       </aside>
     </div>
   </main>
