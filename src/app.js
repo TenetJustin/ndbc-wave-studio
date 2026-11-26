@@ -730,6 +730,10 @@ function zoomAt(event) {
 }
 
 function bind() {
+  const mast = document.querySelector('.mast');
+  const measureMast = () => document.documentElement.style.setProperty('--mast-height', `${Math.ceil(mast.getBoundingClientRect().height)}px`);
+  new ResizeObserver(measureMast).observe(mast);
+  measureMast();
   const tabs = $('workspace-tabs');
   tabs.addEventListener('click', event => {
     const tab = event.target.closest('[data-panel]');
@@ -759,7 +763,7 @@ function bind() {
   document.querySelectorAll('[data-open-panel]').forEach(button => button.addEventListener('click', () => {
     closeSourceMenu();
     openPanel(button.dataset.openPanel, { focus: true });
-    if (tabs.getBoundingClientRect().top < document.querySelector('.mast').getBoundingClientRect().bottom) {
+    if (tabs.getBoundingClientRect().top < mast.getBoundingClientRect().bottom) {
       tabs.scrollIntoView({ block: 'start', behavior: 'instant' });
     }
   }));

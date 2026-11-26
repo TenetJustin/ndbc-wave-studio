@@ -169,7 +169,7 @@ body { background:var(--page); }
   .wave-frame { height:clamp(370px,63dvh,650px); }
 }
 @media (max-width:600px) {
-  html { scroll-padding-top:110px; }
+  html { scroll-padding-top:calc(var(--mast-height, 98px) + 46px); }
   .shell { width:calc(100% - 20px); }
   .mast-inner { height:auto;min-height:96px;padding:7px 0;grid-template-columns:minmax(0,1fr) auto;gap:7px; }
   .source-controls { grid-row:2;grid-column:1/-1; }
@@ -182,6 +182,7 @@ body { background:var(--page); }
   .brand small { font-size:8px; }
   .quick-import { min-height:35px!important; }
   .work { padding-top:7px; }
+  .work-line { position:sticky;top:var(--mast-height, 98px);z-index:6;background:var(--page); }
   .workspace-tabs { scrollbar-width:none; }
   .workspace-tabs button { font-size:12px;padding:6px 7px; }
   .section { padding-top:8px; }
