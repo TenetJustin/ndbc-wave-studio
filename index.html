@@ -34,7 +34,7 @@
 
       <div class="workspace">
         <div class="work-line"><div class="workspace-tabs" id="workspace-tabs" role="tablist" aria-label="分析视图"><button id="tab-wave" data-panel="wave" type="button" role="tab" aria-controls="wave" aria-selected="true">三维波面</button><button id="tab-spectra" data-panel="spectra" type="button" role="tab" aria-controls="spectra" aria-selected="false" tabindex="-1">一维频谱</button><button id="tab-direction" data-panel="direction" type="button" role="tab" aria-controls="direction" aria-selected="false" tabindex="-1">方向谱</button><button id="tab-checks" data-panel="checks" type="button" role="tab" aria-controls="checks" aria-selected="false" tabindex="-1">统计检验</button><button id="tab-data" data-panel="data" type="button" role="tab" aria-controls="data" aria-selected="false" tabindex="-1">站位与观测</button></div><button id="undo" class="plain-button" type="button" hidden>撤销</button></div>
-        <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
+        <div class="notice" id="notice" hidden><span id="notice-text" role="status" aria-live="polite"></span><button class="plain-button" id="dismiss-notice" type="button" aria-label="关闭提示">关闭</button></div>
 
       <section class="section" id="data" aria-labelledby="tab-data" role="tabpanel" hidden>
         <header class="section-head"><div><h2 id="data-title">41046 站观测</h2><p>2025 年资料期内的逐日最大有效波高和三个代表时次。</p></div></header>

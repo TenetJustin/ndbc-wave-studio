@@ -160,7 +160,8 @@ body.dragging::before{content:"松开以导入海浪谱文件";position:fixed;z-
 .trace .method{padding:10px 13px;border-top:1px solid var(--border)}
 .trace .method input{width:100%}
 .trace .method .inline{gap:5px;margin-bottom:0}
-.notice{position:fixed;inset:auto 20px 20px auto;max-width:min(420px,calc(100% - 40px));margin:0;z-index:15;box-shadow:0 10px 28px #0003}
+.notice{position:fixed;inset:auto 20px 20px auto;display:flex;align-items:center;gap:9px;max-width:min(420px,calc(100% - 40px));padding:5px 8px 5px 13px;margin:0;z-index:15;box-shadow:0 10px 28px #0003}
+.notice button{flex:none;font-size:12px}
 .workspace-dialog{width:min(530px,100% - 30px);max-height:calc(100dvh - 45px);padding:19px;border:1px solid var(--border);border-radius:15px;background:var(--surface);color:var(--text);box-shadow:0 22px 70px #0005}
 .workspace-dialog::backdrop{background:#070f18aa;backdrop-filter:blur(3px)}
 .workspace-dialog[open]{animation:panel-in var(--speed) var(--easing) both}

@@ -17,7 +17,7 @@ const select = (root, attr, value) => root.querySelectorAll(`[data-${attr}]`).fo
 
 function notify(message, type = '') {
   const n = $('notice');
-  n.textContent = message; n.className = `notice ${type}`; n.hidden = !message;
+  $('notice-text').textContent = message; n.className = `notice ${type}`; n.hidden = !message;
   clearTimeout(notify.timer);
   if (message && type !== 'error') notify.timer = setTimeout(() => { n.hidden = true; }, 4700);
 }
@@ -80,6 +80,18 @@ function currentArchive(record) {
 
 function setCaseButtons() {
   select($('data-cases'), 'case', state.record?.id);
+}
+
+function builtInCase(record) {
+  if (!record) return;
+  const fields = ['f', 's', 'df', 'a1', 'a2', 'r1', 'r2'];
+  return state.data?.cases.find(candidate => candidate.name === record.name && candidate.time === record.time
+    && candidate.origin === record.origin && candidate.rows.length === record.rows.length
+    && candidate.rows.every((row, i) => fields.every(key => (row[key] ?? null) === (record.rows[i][key] ?? null))));
+}
+
+function preferencesForNewData() {
+  return { ...state.prefs, assume: false };
 }
 
 function openPanel(id, { focus = false, hash = true } = {}) {
@@ -443,7 +455,8 @@ async function importFiles(files) {
     const imported = await task('import', { kind: 'import', files: source });
     if (!imported || generation !== importRevision) return;
     const message = imported.prefs ? '实验已恢复。' : `已导入 ${imported.record.rows.length} 个有效频带。`;
-    await selectRecord(imported.record, imported.prefs || initialPrefs(), { archive: imported.record.archiveTimes ? source : null, confirm: message });
+    const record = (imported.prefs ? builtInCase(imported.record) : null) ?? imported.record;
+    await selectRecord(record, imported.prefs || preferencesForNewData(), { archive: record.archiveTimes ? source : null, confirm: message });
     if (generation === importRevision && imported.version && imported.version !== '1.0.0') notify(`已用当前算法复算。原记录版本 ${String(imported.version).slice(0, 20)}。`);
   } catch (error) { if (generation === importRevision) notify(error.message, 'error'); }
 }
@@ -518,7 +531,7 @@ function makeCaseButtons() {
 function selectCase(record) {
   supersedeImport();
   if (state.record?.id === record.id && !state.pending) { notify(''); return; }
-  void selectRecord(record, initialPrefs(), { confirm: `已切换至${record.name}。` });
+  void selectRecord(record, preferencesForNewData(), { confirm: `已切换至${record.name}。` });
 }
 
 function changeTheme(light) {
@@ -588,6 +601,7 @@ function bind() {
   $('project-open').addEventListener('click', () => $('project-dialog').showModal());
   $('open-export').addEventListener('click', () => $('export-dialog').showModal());
   document.querySelectorAll('[data-close-dialog]').forEach(button => button.addEventListener('click', () => $(button.dataset.closeDialog).close()));
+  $('dismiss-notice').addEventListener('click', () => notify(''));
   document.querySelectorAll('[data-import]').forEach(b => b.addEventListener('click', () => $('files').click()));
   $('files').addEventListener('change', e => { void importFiles(e.target.files); e.target.value = ''; });
   const hasFile = e => Array.from(e.dataTransfer.types).includes('Files');
@@ -610,7 +624,9 @@ function bind() {
       const next = new Date(`${value.replace(' ', 'T')}:00Z`).toISOString();
       const files = state.archiveFiles;
       const data = await task('import', { kind: 'import', files, time: next });
-      if (data && generation === importRevision) await selectRecord(data.record, initialPrefs(), { archive: files, confirm: '已切换 NDBC 观测时次。' });
+      if (data && generation === importRevision) {
+        await selectRecord(data.record, preferencesForNewData(), { archive: files, confirm: '已切换 NDBC 观测时次。' });
+      }
     } catch (error) { if (generation === importRevision) notify(error.message, 'error'); }
   });
   $('frequency').addEventListener('input', e => changeFrequency(Number(e.target.value)));
@@ -699,7 +715,7 @@ async function start() {
       const text = localStorage.getItem(storage);
       if (text) saved = parseFiles([{ name: 'previous.json', text }]);
     } catch { /* continue with the public example */ }
-    const found = saved && state.data.cases.find(record => record.name === saved.record.name && record.time === saved.record.time && record.origin === saved.record.origin);
+    const found = builtInCase(saved?.record);
     if (!state.record && !state.pending) await selectRecord(found || saved?.record || fallback, saved?.prefs || initialPrefs(), { save: false });
   } catch (error) { notify(error.message, 'error'); }
 }
