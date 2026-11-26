@@ -338,23 +338,31 @@ export function oceanStage(host, options = {}) {
     if (coarse.matches) { controls.enabled = false; canvas.style.touchAction = 'pan-y'; }
   });
 
-  let modes = [], point = { x: 0, y: 0 }, view = 'ocean', size = '', toTop = false, renderedTime = 0;
+  let modes = [], point = { x: 0, y: 0 }, view = 'ocean', size = '', toTop = false, renderedTime = 0, cameraMove = null;
   const lastCamera = new THREE.Vector3();
   const dpr = Math.min(mobile ? 1.14 : 1.38, devicePixelRatio || 1);
-  function cameraPreset(top = false) {
+  function cameraPreset(top = false, animate = false) {
     toTop = top;
     const aspect = host.clientWidth / Math.max(host.clientHeight, 1);
     const scale = Math.max(1, .95 / Math.max(.5, aspect));
-    if (top) camera.position.set(0, 540 * scale, .18);
-    else if (view === 'ocean') camera.position.set(86 * Math.min(scale, 1.22), 19, 132 * Math.min(scale, 1.22));
-    else camera.position.set(288 * scale, 224 * scale, 307 * scale);
-    camera.fov = top || view === 'science' ? 39 : 45;
+    const position = new THREE.Vector3(), target = new THREE.Vector3(0, top || view === 'science' ? 0 : 7, 0);
+    const fov = top || view === 'science' ? 39 : 45;
+    if (top) position.set(0, 540 * scale, .18);
+    else if (view === 'ocean') position.set(86 * Math.min(scale, 1.22), 19, 132 * Math.min(scale, 1.22));
+    else position.set(288 * scale, 224 * scale, 307 * scale);
+    if (animate && !motion.matches && size) {
+      cameraMove = { position, target, fov, from: camera.position.clone(), fromTarget: controls.target.clone(), fromFov: camera.fov, start: performance.now() };
+      return;
+    }
+    cameraMove = null;
+    camera.position.copy(position);
+    camera.fov = fov;
     camera.updateProjectionMatrix();
-    controls.target.set(0, top || view === 'science' ? 0 : 7, 0);
+    controls.target.copy(target);
     controls.update();
   }
   cameraPreset();
-  const loop = simulationLoop(host, t => {
+  const loop = simulationLoop(host, (t, now) => {
     const w = host.clientWidth, h = host.clientHeight;
     if (!w || !h) return false;
     const key = `${w}/${h}`;
@@ -369,8 +377,17 @@ export function oceanStage(host, options = {}) {
     }
     surface.uniforms.uTime.value = t;
     renderedTime = t;
+    if (cameraMove) {
+      const progress = Math.max(0, Math.min(1, (now - cameraMove.start) / 320));
+      const easing = 1 - (1 - progress) ** 3;
+      camera.position.lerpVectors(cameraMove.from, cameraMove.position, easing);
+      controls.target.lerpVectors(cameraMove.fromTarget, cameraMove.target, easing);
+      camera.fov = THREE.MathUtils.lerp(cameraMove.fromFov, cameraMove.fov, easing);
+      camera.updateProjectionMatrix();
+      if (progress === 1) cameraMove = null;
+    }
     controls.update();
-    if (toTop && Math.hypot(camera.position.x, camera.position.z) > 15) {
+    if (!cameraMove && toTop && Math.hypot(camera.position.x, camera.position.z) > 15) {
       toTop = false;
       options.onCamera?.();
     }
@@ -379,12 +396,16 @@ export function oceanStage(host, options = {}) {
     renderer.render(scene, camera);
     const moving = lastCamera.distanceToSquared(camera.position) > .000005;
     lastCamera.copy(camera.position);
-    return moving;
+    return moving || cameraMove !== null;
   }, options);
 
-  const watchMotion = () => { controls.enableDamping = !motion.matches; };
+  const watchMotion = () => {
+    controls.enableDamping = !motion.matches;
+    if (motion.matches && cameraMove) { cameraPreset(toTop); loop.request(); }
+  };
   motion.addEventListener('change', watchMotion);
   controls.addEventListener('change', loop.request);
+  controls.addEventListener('start', () => { cameraMove = null; });
   const raycaster = new THREE.Raycaster();
   let start;
   canvas.addEventListener('pointerdown', e => { start = e.isPrimary && e.button === 0 ? [e.clientX, e.clientY] : null; });
@@ -434,13 +455,13 @@ export function oceanStage(host, options = {}) {
       surface.uniforms.uOcean.value = ocean ? 1 : 0;
       sea.geometry = ocean ? seaGrid : heightGrid;
       sky.visible = ocean;
-      cameraPreset(toTop);
+      cameraPreset(toTop, true);
       loop.request();
     },
     setPoint(next) { point = next; loop.request(); },
-    top() { cameraPreset(!toTop); loop.request(); },
+    top() { cameraPreset(!toTop, true); loop.request(); },
     isTop() { return toTop; },
-    reset() { cameraPreset(); loop.request(); },
+    reset() { cameraPreset(false, true); loop.request(); },
     dispose() {
       loop.dispose();
       motion.removeEventListener('change', watchMotion);
