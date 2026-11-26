@@ -5,11 +5,12 @@ import { line, heat, hoveredIndex, stationMap } from './charts.js';
 const $ = id => document.getElementById(id);
 const base = new URL('../', import.meta.url);
 const storage = 'ndbc-wave-studio:last-experiment/1';
+const referenceStorage = 'ndbc-wave-studio:reference/1';
 const shade = 'ndbc-wave-studio:theme';
 const initialPrefs = () => ({ seed: 41046, point: { x: 0, y: 0 }, assume: false, scenario: 'original', custom: { ...PRESETS.original } });
 const state = { data: null, map: null, record: null, result: null, prefs: initialPrefs(), history: [],
   groups: [], modes: [], jobs: new Map(), stats: new Map(), selected: 0, bounds: null, scale: 'shared', curves: { observed: true, ittc: true, jonswap: true },
-  lab: null, stage: null, panel: 'wave', view: 'science', trace: null, labTime: 0, validationRun: 0, archiveFiles: null, pending: false };
+  lab: null, stage: null, panel: 'wave', view: 'ocean', speed: 1, trace: null, labTime: 0, validationRun: 0, archiveFiles: null, pending: false, reference: null, compareScale: 'absolute' };
 const titles = { original: '原方案', updated: '新方案', both: '并排比较', custom: '自定义方案' };
 const dateLabel = value => value?.replace('T', ' ').replace(/:00(?:\.000)?Z$/, '') || '未记录';
 const rounded = (x, digits = 2) => Number.isFinite(x) ? x.toFixed(digits) : '—';
@@ -52,7 +53,11 @@ function supersedeImport() {
 
 function remember() {
   if (!state.record) return;
-  state.history.push({ record: state.record, prefs: structuredClone(state.prefs), archive: state.archiveFiles });
+  pushHistory({ record: state.record, prefs: structuredClone(state.prefs), archive: state.archiveFiles });
+}
+
+function pushHistory(entry) {
+  state.history.push(entry);
   if (state.history.length > 12) state.history.shift();
   $('undo').hidden = false;
 }
@@ -103,6 +108,7 @@ function openPanel(id, { focus = false, hash = true } = {}) {
     updatePlayButtons();
   }
   state.panel = active.dataset.panel;
+  $('workbench').dataset.panel = state.panel;
   for (const tab of tabs) {
     const current = tab === active;
     tab.setAttribute('aria-selected', current);
@@ -121,7 +127,7 @@ function openPanel(id, { focus = false, hash = true } = {}) {
   });
 }
 
-async function selectRecord(record, prefs = initialPrefs(), { save = true, archive = null, confirm = '' } = {}) {
+async function selectRecord(record, prefs = initialPrefs(), { save = true, archive = null, confirm = '', keepTime = false } = {}) {
   if (!record) return;
   const old = state.record;
   try {
@@ -136,8 +142,8 @@ async function selectRecord(record, prefs = initialPrefs(), { save = true, archi
     state.archiveFiles = archive;
     state.selected = result.stat.peak;
     state.bounds = null;
-    state.labTime = 0;
-    if (state.lab) { state.lab.play(false); state.lab.seek(0); }
+    state.labTime = keepTime ? state.labTime : 0;
+    if (state.lab) { state.lab.play(false); state.lab.seek(state.labTime); }
     state.groups = result.direction ? phases(result, prefs.seed) : [];
     state.modes = state.groups.flatMap(group => group.values);
     $('frequency').max = String(result.rows.length - 1);
@@ -152,6 +158,7 @@ async function selectRecord(record, prefs = initialPrefs(), { save = true, archi
     runChecks();
     persist();
     if (confirm) notify(confirm);
+    return true;
   } catch (error) {
     notify(error.message, 'error');
     if (!old) $('active-name').textContent = '等待可用的观测频谱';
@@ -194,6 +201,7 @@ function updateReading() {
   for (const id of ['open-export', 'export-json', 'export-csv', 'export-image']) $(id).disabled = false;
   setCaseButtons();
   changeFrequency(state.selected);
+  updateComparison();
 }
 
 function drawSpectrum(canvas = $('spectrum')) {
@@ -261,17 +269,21 @@ function drawTimeline() {
 function dateValue(value) { return new Date(value).getTime(); }
 
 function redraw() {
-  drawTimeline(); drawSpectrum(); drawDirection(); drawTrace(); drawCheckCharts();
+  drawTimeline(); drawSpectrum(); drawDirection(); drawTrace(); drawCheckCharts(); drawComparison();
   if (state.data) stationMap($('map'), state.map, state.data.station);
 }
 
-function timeReading(value) {
+function timeReading(value, force = false) {
   state.labTime = value;
-  const ds = `${value.toFixed(1)} s`;
-  if ($('time-readout').textContent !== ds) {
+  const ds = `${value.toFixed(state.lab?.playing() ? 1 : 2)} s`;
+  if (force || $('time-readout').textContent !== ds) {
     $('time-slider').value = String(value); $('time-readout').textContent = ds;
+    $('trace-time').textContent = ds;
     $('point-value').textContent = `${rounded(waveAt(state.modes, state.prefs.point.x, state.prefs.point.y, value))} m`;
-    if ((state.lastTraceTime ?? -1) + .16 < value || state.lastTraceTime > value) { state.lastTraceTime = value; drawTrace(); }
+    if (force || (state.lastTraceTime ?? -1) + .16 < value || state.lastTraceTime > value) {
+      state.lastTraceTime = value;
+      drawTrace();
+    }
   }
 }
 
@@ -279,7 +291,9 @@ function attachScene(fallback = false) {
   const host = $('lab-media');
   state.lab?.dispose();
   state.lab = (fallback ? state.stage.create2d : state.stage.oceanStage)(host, {
-    onTime: timeReading, pick: setPoint, onLost: () => { attachScene(true); setupLab(); },
+    onTime: timeReading, pick: setPoint, onCamera: updateViewReading,
+    onOutside: () => notify('请在模型的 320 × 320 m 区域内选点，也可在实验面板直接输入坐标。'),
+    onLost: () => { attachScene(true); setupLab(); },
   });
   host.dataset.render = state.lab.kind;
 }
@@ -310,16 +324,20 @@ function setupLab() {
     attachScene();
   }
   const share = state.lab.setData(state.modes, state.result.stat.hm0);
+  if (state.lab.kind === '2d') state.view = 'science';
   state.lab.setView(state.view); state.lab.setPoint(state.prefs.point); state.lab.seek(state.labTime);
+  state.lab.setRate(state.speed);
   $('stage-loading').hidden = true;
-  $('stage-note').textContent = `${state.lab.kind === 'three' ? 'Three.js · 320 × 320 m' : '二维高程 · 320 × 320 m'} · 显示成分保留 ${rounded(share * 100, 1)}% 谱能量 · 统计用完整谱`;
+  $('wave-title').textContent = state.lab.kind === '2d' ? '二维高程' : '三维波面';
+  $('stage-note').textContent = `320 × 320 m · 渲染 ${rounded(share * 100, 1)}% 谱能量 · 统计用完整谱`;
   const range = Math.max(.02, state.result.stat.hm0 * .59);
   $('range-top').textContent = `+${rounded(range, 1)} m`;
   $('range-bottom').textContent = `−${rounded(range, 1)} m`;
   $('top-view').hidden = state.lab.kind !== 'three'; $('reset-view').hidden = state.lab.kind !== 'three';
+  $('views').querySelector('[data-mode=ocean]').hidden = state.lab.kind !== 'three';
   $('wave-instructions').textContent = state.lab.kind === '2d' ? '点按高程图改变测点。方向键也可移动测点。'
     : matchMedia('(pointer: coarse)').matches ? '点选测点后可拖动旋转。点到图外可继续滚动。' : '拖动旋转，点选波面改变测点。';
-  $('elevation-key').hidden = state.view === 'ocean';
+  updateViewReading();
   updatePlayButtons();
 }
 
@@ -330,22 +348,152 @@ function setPoint(point) {
   remember();
   state.prefs.point = next;
   state.lab?.setPoint(next);
-  refreshTrace(); state.stats.clear(); runChecks(); persist();
+  refreshTrace(); state.stats.clear(); runChecks(); persist(); updateComparison();
 }
 
 function refreshTrace() {
   if (!state.groups.length) return;
   const pt = state.prefs.point, step = .25;
+  $('probe-x').value = pt.x;
+  $('probe-y').value = pt.y;
   $('point-name').textContent = `东 ${pt.x.toFixed(1)} m · 北 ${pt.y.toFixed(1)} m`;
   $('point-value').textContent = `${rounded(waveAt(state.modes, pt.x, pt.y, state.labTime))} m`;
   state.trace = { x: Array.from({ length: 321 }, (_, i) => i * step), y: samplePoint(state.groups, pt, step, 321) };
   drawTrace();
 }
 
+function seekTime(seconds) {
+  const value = Math.min(80, Math.max(0, seconds));
+  state.lab?.play(false);
+  state.lab?.seek(value);
+  timeReading(value, true);
+  updatePlayButtons();
+}
+
+function updateViewReading() {
+  $('wave-frame').dataset.view = state.view;
+  $('elevation-key').hidden = state.view === 'ocean';
+  select($('views'), 'mode', state.view);
+  $('top-view').setAttribute('aria-pressed', String(Boolean(state.lab?.isTop?.())));
+}
+
 function drawTrace() {
   if (!state.trace || !state.result?.direction) return;
   const index = Math.min(320, Math.round(state.labTime * 4));
   line($('trace'), { xLabel: '模拟秒', yLabel: '高程 · m', cursor: state.trace.x[index], series: [{ x: state.trace.x, y: state.trace.y, color: 'chart-observed', weight: 1.6 }] });
+}
+
+const comparisonMetrics = [
+  ['谱有效波高 Hₘ₀', 'm', 2, stat => stat.hm0],
+  ['谱峰周期 Tₚ', 's', 2, stat => stat.tp],
+  ['平均周期 Tₘ₀₁', 's', 2, stat => stat.tm01],
+  ['峰值频率', 'Hz', 4, stat => 1 / stat.tp],
+];
+
+function experimentMeta({ record, prefs, result }) {
+  const parts = [record.time ? `${dateLabel(record.time)} UTC` : record.origin];
+  if (result.direction) {
+    parts.push(result.direction.assumed ? '固定方向假设' : 'MEM', `种子 ${prefs.seed}`,
+      `东 ${prefs.point.x} · 北 ${prefs.point.y} m`, titles[prefs.scenario]);
+  }
+  return parts.filter(Boolean).join(' · ');
+}
+
+function comparisonRows() {
+  return comparisonMetrics.map(([name, unit, digits, read]) => {
+    const baseline = read(state.reference.result.stat), current = read(state.result.stat);
+    return { name, unit, digits, baseline, current, delta: current - baseline };
+  });
+}
+
+function drawComparison() {
+  if (state.panel !== 'compare' || !state.reference || !state.result) return;
+  const normalized = state.compareScale === 'normalized';
+  const series = [
+    { result: state.reference.result, color: 'chart-ittc', dash: [7, 4] },
+    { result: state.result, color: 'chart-observed', area: true },
+  ].map(({ result, ...style }) => ({
+    x: result.rows.map(row => row.f), y: result.rows.map(row => row.s / (normalized ? result.stat.m0 : 1)), ...style,
+  }));
+  const range = [Math.min(...series.map(({ x }) => x[0])), Math.max(...series.map(({ x }) => x.at(-1)))];
+  $('compare-scale-caption').textContent = normalized ? '每条谱除以自身 m₀，可以比较峰值位置与谱形。' : '各谱保留原始频率网格与谱值单位。';
+  line($('compare-spectrum'), { xLabel: '频率 · Hz', yLabel: normalized ? 'S(f) / m₀ · 1/Hz' : '实测谱 · m²/Hz', bounds: range, series });
+}
+
+function updateComparison() {
+  const ref = state.reference;
+  const ready = Boolean(ref && state.result);
+  $('compare-empty').hidden = ready;
+  $('compare-output').hidden = !ready;
+  $('view-reference').hidden = !ready;
+  document.querySelectorAll('[data-pin-reference]').forEach(button => {
+    button.disabled = !state.result;
+    button.textContent = ref ? '更新基准' : '设为基准';
+  });
+  if (!ready) return;
+  $('ref-name').textContent = ref.record.name;
+  $('ref-meta').textContent = experimentMeta(ref);
+  $('compare-name').textContent = state.record.name;
+  $('compare-meta').textContent = experimentMeta(state);
+  $('compare-values').replaceChildren(...comparisonRows().map(({ name, unit, digits, baseline, current, delta }) => {
+    const row = document.createElement('tr');
+    const title = document.createElement('th');
+    title.scope = 'row';
+    title.textContent = `${name} / ${unit}`;
+    row.append(title);
+    for (const value of [rounded(baseline, digits), rounded(current, digits), `${delta > 0 ? '+' : ''}${rounded(delta, digits)}`]) {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      row.append(cell);
+    }
+    return row;
+  }));
+  drawComparison();
+}
+
+function pinReference() {
+  if (!state.record || !state.result) return;
+  const snapshot = { record: state.record, prefs: structuredClone(state.prefs), result: state.result, archive: state.archiveFiles };
+  pushHistory({ reference: state.reference });
+  state.reference = snapshot;
+  updateComparison();
+  try {
+    persistReference();
+    notify(`已保存基准：${snapshot.record.name}。`);
+  } catch { notify('已设为基准。此浏览器无法将基准保留到下次打开。'); }
+}
+
+function persistReference() {
+  const ref = state.reference;
+  if (ref) localStorage.setItem(referenceStorage, JSON.stringify(experiment(ref.record, ref.prefs)));
+  else localStorage.removeItem(referenceStorage);
+}
+
+async function loadReference() {
+  try {
+    const text = localStorage.getItem(referenceStorage);
+    if (!text) return;
+    const { record, prefs } = parseFiles([{ name: 'reference.json', text }]);
+    const result = await task('reference', { kind: 'analysis', record, assume: prefs.assume });
+    if (result && !state.reference) {
+      state.reference = { record: builtInCase(record) ?? record, prefs, result };
+      updateComparison();
+    }
+  } catch { /* An unreadable local baseline can be replaced from the current experiment. */ }
+}
+
+function exportComparison() {
+  if (!state.reference || !state.result) return;
+  const cell = text => `"${String(text).replaceAll('"', '""')}"`;
+  const label = text => cell(/^[=+@\-\t\r]/.test(text) ? "'" + text : text);
+  const rows = [
+    ['dataset', '', label(state.reference.record.name), label(state.record.name), ''],
+    ['observation_utc', '', cell(state.reference.record.time || ''), cell(state.record.time || ''), ''],
+    ...comparisonRows().map(({ name, unit, digits, baseline, current, delta }) =>
+      [cell(name), unit, rounded(baseline, digits), rounded(current, digits), rounded(delta, digits)]),
+  ];
+  exportFile(new Blob(['\uFEFFmetric,unit,baseline,current,delta\n' + rows.map(row => row.join(',')).join('\n') + '\n'], { type: 'text/csv;charset=utf-8' }), 'wave-comparison.csv');
+  notify('对照表已导出。');
 }
 
 function scenarios() { return state.prefs.scenario === 'both' ? ['original', 'updated'] : [state.prefs.scenario]; }
@@ -456,7 +604,11 @@ async function importFiles(files) {
     if (!imported || generation !== importRevision) return;
     const message = imported.prefs ? '实验已恢复。' : `已导入 ${imported.record.rows.length} 个有效频带。`;
     const record = (imported.prefs ? builtInCase(imported.record) : null) ?? imported.record;
-    await selectRecord(record, imported.prefs || preferencesForNewData(), { archive: record.archiveTimes ? source : null, confirm: message });
+    const saved = await selectRecord(record, imported.prefs || preferencesForNewData(), { archive: record.archiveTimes ? source : null, confirm: message });
+    if (saved && generation === importRevision) {
+      if (state.archiveFiles) $('source-menu').open = true;
+      else closeSourceMenu();
+    }
     if (generation === importRevision && imported.version && imported.version !== '1.0.0') notify(`已用当前算法复算。原记录版本 ${String(imported.version).slice(0, 20)}。`);
   } catch (error) { if (generation === importRevision) notify(error.message, 'error'); }
 }
@@ -529,9 +681,18 @@ function makeCaseButtons() {
 }
 
 function selectCase(record) {
+  closeSourceMenu();
   supersedeImport();
   if (state.record?.id === record.id && !state.pending) { notify(''); return; }
   void selectRecord(record, preferencesForNewData(), { confirm: `已切换至${record.name}。` });
+}
+
+function closeSourceMenu() {
+  const menu = $('source-menu');
+  if (!menu.open) return;
+  const focused = menu.contains(document.activeElement);
+  menu.open = false;
+  if (focused) menu.querySelector('summary').focus({ preventScroll: true });
 }
 
 function changeTheme(light) {
@@ -569,6 +730,10 @@ function zoomAt(event) {
 }
 
 function bind() {
+  const mast = document.querySelector('.mast');
+  const measureMast = () => document.documentElement.style.setProperty('--mast-height', `${Math.ceil(mast.getBoundingClientRect().height)}px`);
+  new ResizeObserver(measureMast).observe(mast);
+  measureMast();
   const tabs = $('workspace-tabs');
   tabs.addEventListener('click', event => {
     const tab = event.target.closest('[data-panel]');
@@ -588,6 +753,7 @@ function bind() {
     if (tabs.querySelector(`[data-panel="${CSS.escape(id)}"]`)) openPanel(id, { hash: false });
   };
   window.addEventListener('hashchange', route);
+  $('workbench').dataset.panel = state.panel;
   route();
   document.querySelector('.brand').addEventListener('click', event => {
     event.preventDefault();
@@ -595,9 +761,16 @@ function bind() {
     window.scrollTo({ top: 0, behavior: 'instant' });
   });
   document.querySelectorAll('[data-open-panel]').forEach(button => button.addEventListener('click', () => {
+    closeSourceMenu();
     openPanel(button.dataset.openPanel, { focus: true });
-    if (tabs.getBoundingClientRect().top < 75) tabs.scrollIntoView({ block: 'start', behavior: 'instant' });
+    if (tabs.getBoundingClientRect().top < mast.getBoundingClientRect().bottom) {
+      tabs.scrollIntoView({ block: 'start', behavior: 'instant' });
+    }
   }));
+  document.addEventListener('click', event => { if (!$('source-menu').contains(event.target)) closeSourceMenu(); });
+  $('source-menu').addEventListener('keydown', event => {
+    if (event.key === 'Escape' && $('source-menu').open) { event.preventDefault(); closeSourceMenu(); }
+  });
   $('project-open').addEventListener('click', () => $('project-dialog').showModal());
   $('open-export').addEventListener('click', () => $('export-dialog').showModal());
   document.querySelectorAll('[data-close-dialog]').forEach(button => button.addEventListener('click', () => $(button.dataset.closeDialog).close()));
@@ -614,7 +787,13 @@ function bind() {
   $('undo').addEventListener('click', () => {
     supersedeImport();
     const previous = state.history.pop(); $('undo').hidden = !state.history.length;
-    if (previous) selectRecord(previous.record, previous.prefs, { save: false, archive: previous.archive, confirm: '已恢复上一个实验状态。' });
+    if (!previous) return;
+    if (Object.hasOwn(previous, 'reference')) {
+      state.reference = previous.reference;
+      try { persistReference(); } catch { /* Undo still applies for this session. */ }
+      updateComparison();
+      notify('已撤销基准变更。');
+    } else selectRecord(previous.record, previous.prefs, { save: false, archive: previous.archive, confirm: '已恢复上一个实验状态。' });
   });
   $('choose-time').addEventListener('click', async () => {
     const value = $('archive-time').value.trim();
@@ -653,15 +832,52 @@ function bind() {
   $('assume-direction').addEventListener('click', () => selectRecord(state.record, { ...state.prefs, assume: true }, { archive: state.archiveFiles, confirm: '已应用固定 cos² 方向假设。' }));
   $('remove-assumption').addEventListener('click', () => selectRecord(state.record, { ...state.prefs, assume: false }, { archive: state.archiveFiles, confirm: '已恢复一维分析。' }));
   $('lab-play').addEventListener('click', () => { if (!state.lab) setupLab(); if (state.lab) state.lab.play(!state.lab.playing()); updatePlayButtons(); });
-  $('time-slider').addEventListener('input', e => { if (!state.lab) setupLab(); state.lab?.play(false); state.lab?.seek(+e.target.value); timeReading(+e.target.value); updatePlayButtons(); });
+  $('time-slider').addEventListener('input', e => seekTime(+e.target.value));
+  $('rewind-time').addEventListener('click', () => seekTime(0));
+  $('play-speeds').addEventListener('click', e => {
+    const button = e.target.closest('[data-speed]');
+    if (!button) return;
+    state.speed = Number(button.dataset.speed);
+    state.lab?.setRate(state.speed);
+    select($('play-speeds'), 'speed', button.dataset.speed);
+  });
   $('views').addEventListener('click', e => {
     const b = e.target.closest('button[data-mode]');
-    if (b) { state.view = b.dataset.mode; select($('views'), 'mode', state.view); state.lab?.setView(state.view); $('elevation-key').hidden = state.view === 'ocean'; }
+    if (b) { state.view = b.dataset.mode; state.lab?.setView(state.view); updateViewReading(); }
   });
-  $('top-view').addEventListener('click', () => state.lab?.top());
-  $('reset-view').addEventListener('click', () => state.lab?.reset());
+  $('top-view').addEventListener('click', () => { state.lab?.top(); updateViewReading(); });
+  $('reset-view').addEventListener('click', () => { state.lab?.reset(); updateViewReading(); });
   $('reset-point').addEventListener('click', () => setPoint({ x: 0, y: 0 }));
-  $('seed-form').addEventListener('submit', e => { e.preventDefault(); selectRecord(state.record, { ...state.prefs, seed: +$('seed').value }, { archive: state.archiveFiles, confirm: '已更新随机相位。' }); });
+  $('trace').addEventListener('click', e => {
+    const index = hoveredIndex($('trace'), e.clientX, e.clientY);
+    if (index != null) seekTime(index * .25);
+  });
+  $('trace').addEventListener('keydown', e => {
+    const direction = { ArrowLeft: -.25, ArrowRight: .25 }[e.key];
+    if (direction == null) return;
+    e.preventDefault();
+    seekTime(state.labTime + direction);
+  });
+  $('probe-form').addEventListener('submit', e => {
+    e.preventDefault();
+    const point = { x: +$('probe-x').value, y: +$('probe-y').value };
+    const seed = +$('seed').value;
+    if (seed === state.prefs.seed) { setPoint(point); return; }
+    selectRecord(state.record, { ...state.prefs, point, seed }, { archive: state.archiveFiles, keepTime: true, confirm: '已更新测点和随机种子。' });
+  });
+  document.querySelectorAll('[data-pin-reference]').forEach(button => button.addEventListener('click', pinReference));
+  $('restore-reference').addEventListener('click', () => {
+    const ref = state.reference;
+    if (ref) selectRecord(ref.record, structuredClone(ref.prefs), { archive: ref.archive, confirm: '已恢复基准实验。' });
+  });
+  $('export-comparison').addEventListener('click', exportComparison);
+  $('compare-scales').addEventListener('click', event => {
+    const button = event.target.closest('[data-compare-scale]');
+    if (!button) return;
+    state.compareScale = button.dataset.compareScale;
+    select($('compare-scales'), 'compare-scale', state.compareScale);
+    drawComparison();
+  });
   $('check-presets').addEventListener('click', e => {
     const b = e.target.closest('button[data-scenario]');
     if (!b || !state.result?.direction) return;
@@ -672,7 +888,7 @@ function bind() {
       }
       return;
     }
-    remember(); state.prefs.scenario = b.dataset.scenario; persist(); runChecks();
+    remember(); state.prefs.scenario = b.dataset.scenario; persist(); runChecks(); updateComparison();
   });
   $('cancel-check').addEventListener('click', () => {
     state.validationRun++;
@@ -687,7 +903,7 @@ function bind() {
     try { validateSettings(custom, Math.max(...state.result.rows.filter(row => row.s > 0).map(row => row.f))); }
     catch (error) { notify(error.message, 'error'); return; }
     remember(); state.prefs.custom = custom;
-    state.prefs.scenario = 'custom'; state.stats.delete('custom'); persist(); runChecks();
+    state.prefs.scenario = 'custom'; state.stats.delete('custom'); persist(); runChecks(); updateComparison();
   });
   for (const [id, action] of [['export-json', exportJson], ['export-csv', exportCsv], ['export-image', exportPng]]) {
     $(id).addEventListener('click', () => { $('export-dialog').close(); action(); });
@@ -717,6 +933,7 @@ async function start() {
     } catch { /* continue with the public example */ }
     const found = builtInCase(saved?.record);
     if (!state.record && !state.pending) await selectRecord(found || saved?.record || fallback, saved?.prefs || initialPrefs(), { save: false });
+    void loadReference();
   } catch (error) { notify(error.message, 'error'); }
 }
 
