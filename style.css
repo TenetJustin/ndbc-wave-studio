@@ -139,7 +139,7 @@ body.dragging::before{content:"松开以导入海浪谱文件";position:fixed;z-
 .panel-head{padding:13px 15px;gap:9px}
 .panel-head h3{font-size:1.01rem}
 .panel-head p,.panel-foot,.method{font-size:13px}
-.wave-frame{height:clamp(345px,55dvh,690px);border-block:1px solid #2d4650}
+.wave-frame{height:clamp(345px,55dvh,690px);border-top:1px solid #2d4650}
 .play-toolbar{padding:12px 15px;gap:13px}
 .frame-key,.frame-axis{font-size:12px}
 .current-metrics{display:grid;grid-template-columns:1fr 1fr;margin:0}
